@@ -22,6 +22,7 @@ import android.util.Log
 import android.media.AudioManager
 import android.net.Uri
 import android.os.*
+import android.os.SystemClock
 import android.preference.PreferenceManager.getDefaultSharedPreferences
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -29,9 +30,11 @@ import android.util.DisplayMetrics
 import android.util.Rational
 import androidx.core.content.ContextCompat
 import android.view.*
+import android.widget.GridLayout
 import android.view.ViewGroup.MarginLayoutParams
 import android.widget.Button
 import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.annotation.DrawableRes
@@ -52,6 +55,8 @@ import androidx.media.AudioFocusRequestCompat
 import androidx.media.AudioManagerCompat
 import java.io.File
 import java.lang.IllegalArgumentException
+import kotlin.math.ln
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 typealias ActivityResultCallback = (Int, Intent?) -> Unit
@@ -85,6 +90,7 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
 
     private lateinit var binding: PlayerBinding
     private lateinit var gestures: TouchGestures
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
 
     // convenience alias
     private val player get() = binding.player
@@ -188,16 +194,16 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     @SuppressLint("ClickableViewAccessibility")
     private fun initListeners() {
         with (binding) {
-            prevBtn.setOnClickListener { playlistPrev() }
-            nextBtn.setOnClickListener { playlistNext() }
-            cycleAudioBtn.setOnClickListener { cycleAudio() }
-            cycleSubsBtn.setOnClickListener { cycleSub() }
+            cycleAudioBtn.setOnClickListener { pickAudio() }
+            cycleSubsBtn.setOnClickListener { pickSub() }
             playBtn.setOnClickListener { player.cyclePause() }
-            cycleDecoderBtn.setOnClickListener { player.cycleHwdec() }
-            cycleSpeedBtn.setOnClickListener { cycleSpeed() }
+            cycleDecoderBtn.setOnClickListener { pickDecoder() }
+            cycleSpeedBtn.setOnClickListener { pickSpeed() }
+            muteBtn.setOnClickListener { toggleMute() }
+            videoSettingsBtn.setOnClickListener { openVideoSettings() }
             topLockBtn.setOnClickListener { lockUI() }
             topPiPBtn.setOnClickListener { goIntoPiP() }
-            topMenuBtn.setOnClickListener { openTopMenu() }
+            topOrientationBtn.setOnClickListener { cycleOrientation() }
             unlockBtn.setOnClickListener { unlockUI() }
             playbackDurationTxt.setOnClickListener {
                 useTimeRemaining = !useTimeRemaining
@@ -205,18 +211,28 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
                 updatePlaybackDuration(psc.durationSec)
             }
 
-            cycleAudioBtn.setOnLongClickListener { pickAudio(); true }
-            cycleSpeedBtn.setOnLongClickListener { pickSpeed(); true }
-            cycleSubsBtn.setOnLongClickListener { pickSub(); true }
-            prevBtn.setOnLongClickListener { openPlaylistMenu(pauseForDialog()); true }
-            nextBtn.setOnLongClickListener { openPlaylistMenu(pauseForDialog()); true }
-            cycleDecoderBtn.setOnLongClickListener { pickDecoder(); true }
-
             playbackSeekbar.setOnSeekBarChangeListener(seekBarChangeListener)
         }
 
         player.setOnTouchListener { _, e ->
-            if (lockedUI) false else gestures.onTouchEvent(e)
+            if (lockedUI) {
+                false
+            } else {
+                scaleGestureDetector.onTouchEvent(e)
+                val now = SystemClock.uptimeMillis()
+
+                if (e.pointerCount >= 2) {
+                    // Two-finger pan handling
+                    // Handled inside onScale for simultaneous zoom/pan
+                }
+
+                val gesturesHandled = if (!scaleGestureDetector.isInProgress && (now - lastScaleEndTime) > 300) {
+                    gestures.onTouchEvent(e)
+                } else {
+                    false
+                }
+                scaleGestureDetector.isInProgress || gesturesHandled
+            }
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.outside) { v, windowInsets ->
@@ -243,7 +259,52 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         }
     }
 
+    private var speedBeforeDoubleSpeed = 1.0
+    private var isDoubleSpeedActive = false
+
+    @Volatile
+    private var zoomPanUpdatePending = false
+    private var currentGestureZoom = 0.0
+    private var currentGesturePanX = 0.0
+    private var currentGesturePanY = 0.0
+
+    private var startZoom = 0.0
+    private var startPanX = 0.0
+    private var startPanY = 0.0
+    private var startFocusX = 0.0
+    private var startFocusY = 0.0
+    private var initialSpan = 1.0f
+    private var wasPausedBeforeZoom = false
+
+    private val zoomPanThread = HandlerThread("ZoomPanThread").apply { start() }
+    private val zoomPanBackgroundHandler = Handler(zoomPanThread.looper)
+
+    private val zoomPanFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            val z = currentGestureZoom
+            val x = currentGesturePanX
+            val y = currentGesturePanY
+            zoomPanBackgroundHandler.removeCallbacksAndMessages(null)
+            zoomPanBackgroundHandler.post {
+                player.videoZoom = z
+                player.videoPanX = x
+                player.videoPanY = y
+            }
+            zoomPanUpdatePending = false
+        }
+    }
+
+    private fun pushZoomPanUpdate() {
+        if (!zoomPanUpdatePending) {
+            zoomPanUpdatePending = true
+            eventUiHandler.post {
+                Choreographer.getInstance().postFrameCallback(zoomPanFrameCallback)
+            }
+        }
+    }
+
     private var playbackHasStarted = false
+    private var lastScaleEndTime = 0L
     private var onloadCommands = mutableListOf<Array<String>>()
 
     // Activity lifetime
@@ -265,6 +326,68 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         initListeners()
 
         gestures = TouchGestures(this)
+        scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                gestures.reset()
+                
+                // Capture the state at the exact moment the second finger touches
+                startZoom = player.videoZoom ?: 0.0
+                startPanX = player.videoPanX ?: 0.0
+                startPanY = player.videoPanY ?: 0.0
+                
+                val vw = binding.player.width.toFloat()
+                val vh = binding.player.height.toFloat()
+                if (vw <= 0 || vh <= 0) return false
+                
+                // Convert screen focus point to relative window coordinates (-0.5 to 0.5)
+                startFocusX = (detector.focusX - vw / 2.0) / vw
+                startFocusY = (detector.focusY - vh / 2.0) / vh
+                initialSpan = detector.currentSpan
+                
+                currentGestureZoom = startZoom
+                currentGesturePanX = startPanX
+                currentGesturePanY = startPanY
+
+                wasPausedBeforeZoom = player.paused ?: true
+                player.paused = true
+                
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (initialSpan <= 0) return true
+                
+                // 1. Calculate total scale since the beginning of this gesture
+                val currentScale = detector.currentSpan / initialSpan
+                
+                val vw = binding.player.width.toFloat()
+                val vh = binding.player.height.toFloat()
+                if (vw <= 0 || vh <= 0) return true
+
+                // 2. Current focus point in relative coordinates
+                val rx = (detector.focusX - vw / 2.0) / vw
+                val ry = (detector.focusY - vh / 2.0) / vh
+
+                // 3. New Zoom level (logarithmic)
+                currentGestureZoom = startZoom + ln(currentScale.toDouble()) / ln(2.0)
+
+                // 4. Anchor Math: Keep the content that was at startFocusX/Y 
+                // under the current rx/ry while accounting for the new scale.
+                currentGesturePanX = rx.toDouble() - (startFocusX - startPanX) * currentScale
+                currentGesturePanY = ry.toDouble() - (startFocusY - startPanY) * currentScale
+
+                pushZoomPanUpdate()
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                lastScaleEndTime = SystemClock.uptimeMillis()
+                if (!wasPausedBeforeZoom) {
+                    player.paused = false
+                }
+                super.onScaleEnd(detector)
+            }
+        })
 
         // set up initial UI state
         readSettings()
@@ -408,11 +531,7 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     private fun shouldBackground(): Boolean {
         if (isFinishing) // about to exit?
             return false
-        return when (backgroundPlayMode) {
-            "always" -> true
-            "audio-only" -> isPlayingAudioOnly()
-            else -> false // "never"
-        }
+        return true
     }
 
     override fun onPause() {
@@ -1191,61 +1310,95 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     private fun selectTrack(type: String, get: () -> Int, set: (Int) -> Unit) {
         val tracks = player.tracks.getValue(type)
         val selectedMpvId = get()
-        val selectedIndex = tracks.indexOfFirst { it.mpvId == selectedMpvId }
         val restore = pauseForDialog()
 
-        with (AlertDialog.Builder(this)) {
-            setSingleChoiceItems(tracks.map { it.name }.toTypedArray(), selectedIndex) { dialog, item ->
-                val trackId = tracks[item].mpvId
+        lateinit var dialog: AlertDialog
+        dialog = with(AlertDialog.Builder(this, R.style.ModernOverlayDialog)) {
+            val view = layoutInflater.inflate(R.layout.dialog_speed_grid, null)
+            val grid = view.findViewById<GridLayout>(R.id.speedGrid)
+            val title = view.findViewById<TextView>(R.id.speedTitle)
+            title.text = if (type == "audio") "Audio Track" else "Subtitle Track"
 
-                set(trackId)
-                dialog.dismiss()
-                trackSwitchNotification { TrackData(trackId, type) }
+            // "Open File..." button
+            run {
+                val btn = Button(context, null, androidx.appcompat.R.attr.buttonStyleSmall)
+                btn.text = "Open File..."
+                btn.isAllCaps = false
+                btn.setBackgroundResource(R.drawable.pill_button)
+                btn.setTextColor(0xFFFFFFFF.toInt())
+                val params = GridLayout.LayoutParams()
+                params.width = 0
+                params.height = GridLayout.LayoutParams.WRAP_CONTENT
+                params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                params.setMargins(8, 8, 8, 8)
+                btn.layoutParams = params
+                btn.setOnClickListener {
+                    dialog.dismiss()
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        this.type = if (type == "audio") "audio/*" else "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+                    activityResultCallbacks[if (type == "audio") RCODE_EXTERNAL_AUDIO else RCODE_EXTERNAL_SUB] = { result, data ->
+                        if (result == RESULT_OK) {
+                            val uri = data?.data
+                            if (uri != null) {
+                                val path = uri.toString()
+                                MPVLib.command(arrayOf(if (type == "audio") "audio-add" else "sub-add", path))
+                            }
+                        }
+                        restore()
+                    }
+                    startActivityForResult(intent, if (type == "audio") RCODE_EXTERNAL_AUDIO else RCODE_EXTERNAL_SUB)
+                }
+                grid.addView(btn)
             }
+            
+            for (track in tracks) {
+                val btn = Button(context, null, androidx.appcompat.R.attr.buttonStyleSmall)
+                btn.text = track.name
+                btn.isAllCaps = false
+                
+                val isSelected = track.mpvId == selectedMpvId
+                btn.setBackgroundResource(if (isSelected) R.drawable.pill_button_selected else R.drawable.pill_button)
+                btn.setTextColor(if (isSelected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                
+                val params = GridLayout.LayoutParams()
+                params.width = 0
+                params.height = GridLayout.LayoutParams.WRAP_CONTENT
+                params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                params.setMargins(8, 8, 8, 8)
+                btn.layoutParams = params
+
+                btn.setOnClickListener {
+                    set(track.mpvId)
+                    restore()
+                    trackSwitchNotification { TrackData(track.mpvId, type) }
+                    dialog.dismiss()
+                }
+                grid.addView(btn)
+            }
+
+            setView(view)
             setOnDismissListener { restore() }
-            create().show()
+            create()
         }
+
+        dialog.show()
+        val width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        dialog.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.findViewById<View>(R.id.dismissBtn)?.setOnClickListener { dialog.dismiss() }
     }
 
     private fun pickAudio() = selectTrack("audio", { player.aid }, { player.aid = it })
 
-    private fun pickSub() {
-        val restore = pauseForDialog()
-        val impl = SubTrackDialog(player)
-        lateinit var dialog: AlertDialog
-        impl.listener = { it, secondary ->
-            if (secondary)
-                player.secondarySid = it.mpvId
-            else
-                player.sid = it.mpvId
-            dialog.dismiss()
-            trackSwitchNotification { TrackData(it.mpvId, SubTrackDialog.TRACK_TYPE) }
-        }
-
-        dialog = with (AlertDialog.Builder(this)) {
-            val inflater = LayoutInflater.from(context)
-            setView(impl.buildView(inflater))
-            setOnDismissListener { restore() }
-            create()
-        }
-        dialog.show()
-    }
+    private fun pickSub() = selectTrack("sub", { player.sid }, { player.sid = it })
 
     private fun openPlaylistMenu(restore: StateRestoreCallback) {
         val impl = PlaylistDialog(player)
         lateinit var dialog: AlertDialog
 
         impl.listeners = object : PlaylistDialog.Listeners {
-            private fun openFilePicker(skip: Int) {
-                openFilePickerFor(RCODE_LOAD_FILE, "", skip) { result, data ->
-                    if (result == RESULT_OK) {
-                        val path = data!!.getStringExtra("path")!!
-                        MPVLib.command(arrayOf("loadfile", path, "append"))
-                        impl.refresh()
-                    }
-                }
-            }
-            override fun pickFile() = openFilePicker(FilePickerActivity.FILE_PICKER)
+            override fun pickFile() {}
 
             override fun openUrl() {
                 val helper = Utils.OpenUrlDialog(this@MPVActivity)
@@ -1265,48 +1418,156 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
             }
         }
 
-        dialog = with (AlertDialog.Builder(this)) {
+        dialog = with (AlertDialog.Builder(this, R.style.ModernOverlayDialog)) {
             val inflater = LayoutInflater.from(context)
             setView(impl.buildView(inflater))
             setOnDismissListener { restore() }
             create()
         }
         dialog.show()
+        val width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        dialog.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
     }
 
     private fun pickDecoder() {
         val restore = pauseForDialog()
 
         val items = mutableListOf(
-            Pair("HW (mediacodec-copy)", "mediacodec-copy"),
+            Pair("HW+", "mediacodec"),
+            Pair("HW", "mediacodec-copy"),
             Pair("SW", "no")
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            items.add(0, Pair("HW+ (mediacodec)", "mediacodec"))
         val hwdecActive = player.hwdecActive
-        val selectedIndex = items.indexOfFirst { it.second == hwdecActive }
-        with (AlertDialog.Builder(this)) {
-            setSingleChoiceItems(items.map { it.first }.toTypedArray(), selectedIndex ) { dialog, idx ->
-                MPVLib.setPropertyString("hwdec", items[idx].second)
-                dialog.dismiss()
+
+        lateinit var dialog: AlertDialog
+        dialog = with(AlertDialog.Builder(this, R.style.ModernOverlayDialog)) {
+            val view = layoutInflater.inflate(R.layout.dialog_speed_grid, null)
+            val grid = view.findViewById<GridLayout>(R.id.speedGrid)
+            val title = view.findViewById<TextView>(R.id.speedTitle)
+            title.text = "Decoder"
+            
+            for (item in items) {
+                val btn = Button(context, null, androidx.appcompat.R.attr.buttonStyleSmall)
+                btn.text = item.first
+                btn.isAllCaps = false
+                
+                val isSelected = item.second == hwdecActive
+                btn.setBackgroundResource(if (isSelected) R.drawable.pill_button_selected else R.drawable.pill_button)
+                btn.setTextColor(if (isSelected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                
+                val params = GridLayout.LayoutParams()
+                params.width = 0
+                params.height = GridLayout.LayoutParams.WRAP_CONTENT
+                params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                params.setMargins(8, 8, 8, 8)
+                btn.layoutParams = params
+
+                btn.setOnClickListener {
+                    MPVLib.setPropertyString("hwdec", item.second)
+                    updateDecoderButton()
+                    dialog.dismiss()
+                }
+                grid.addView(btn)
             }
+
+            setView(view)
             setOnDismissListener { restore() }
-            create().show()
+            create()
         }
+
+        dialog.show()
+        val width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        dialog.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.findViewById<View>(R.id.dismissBtn)?.setOnClickListener { dialog.dismiss() }
     }
 
     private fun cycleSpeed() {
         player.cycleSpeed()
     }
 
-    private fun pickSpeed() {
-        // TODO: replace this with SliderPickerDialog
-        val picker = SpeedPickerDialog()
+    private fun toggleMute() {
+        val muted = MPVLib.getPropertyBoolean("mute") ?: false
+        MPVLib.setPropertyBoolean("mute", !muted)
+        updateMuteButton(!muted)
+    }
 
+    private fun updateMuteButton(muted: Boolean) {
+        val icon = if (muted) R.drawable.ic_volume_off_white_24dp else R.drawable.ic_volume_up_white_24dp
+        binding.muteBtn.setImageResource(icon)
+        binding.muteBtn.alpha = if (muted) 0.5f else 1.0f
+    }
+
+    private fun openVideoSettings() {
         val restore = pauseForDialog()
-        genericPickerDialog(picker, R.string.title_speed_dialog, "speed") {
-            restore()
+        val impl = VideoSettingsDialog(player)
+        val dialog = with (AlertDialog.Builder(this, R.style.ModernOverlayDialog)) {
+            val view = impl.buildView(layoutInflater)
+            setView(view)
+            setOnDismissListener { restore() }
+            create()
         }
+        dialog.show()
+        
+        // Limit width to 70% of screen
+        val width = (resources.displayMetrics.widthPixels * 0.70).toInt()
+        dialog.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+        
+        dialog.findViewById<View>(R.id.doneBtn)?.setOnClickListener { dialog.dismiss() }
+        dialog.findViewById<View>(R.id.advancedBtn)?.setOnClickListener {
+            dialog.dismiss()
+            openAdvancedMenu(restore)
+        }
+    }
+
+    private fun pickSpeed() {
+        val restore = pauseForDialog()
+        val speeds = arrayOf(0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0, 8.0)
+        val currentSpeed = player.playbackSpeed ?: 1.0
+
+        lateinit var dialog: AlertDialog
+        dialog = with(AlertDialog.Builder(this, R.style.ModernOverlayDialog)) {
+            val view = layoutInflater.inflate(R.layout.dialog_speed_grid, null)
+            val grid = view.findViewById<GridLayout>(R.id.speedGrid)
+            
+            for (speed in speeds) {
+                val btn = Button(context, null, androidx.appcompat.R.attr.buttonStyleSmall)
+                btn.text = "${speed}x"
+                btn.isAllCaps = false
+                
+                // Style as pill
+                val isSelected = kotlin.math.abs(speed - currentSpeed) < 0.001
+                btn.setBackgroundResource(if (isSelected) R.drawable.pill_button_selected else R.drawable.pill_button)
+                btn.setTextColor(if (isSelected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                
+                // Set layout params for 3-column grid with margins
+                val params = GridLayout.LayoutParams()
+                params.width = 0
+                params.height = GridLayout.LayoutParams.WRAP_CONTENT
+                params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                params.setMargins(8, 8, 8, 8)
+                btn.layoutParams = params
+
+                btn.setOnClickListener {
+                    player.playbackSpeed = speed
+                    restore()
+                    updateSpeedButton()
+                    dialog.dismiss()
+                }
+                grid.addView(btn)
+            }
+
+            setView(view)
+            setOnDismissListener { restore() }
+            create()
+        }
+
+        dialog.show()
+        
+        // Limit width to 85% of screen for better fit
+        val width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        dialog.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+
+        dialog.findViewById<View>(R.id.dismissBtn)?.setOnClickListener { dialog.dismiss() }
     }
 
     private fun goIntoPiP() {
@@ -1382,18 +1643,6 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         /******/
         val hiddenButtons = mutableSetOf<Int>()
         val buttons: MutableList<MenuItem> = mutableListOf(
-                MenuItem(R.id.audioBtn) {
-                    openFilePickerFor(RCODE_EXTERNAL_AUDIO, R.string.open_external_audio) { result, data ->
-                        addExternalThing("audio-add", result, data)
-                        restoreState()
-                    }; false
-                },
-                MenuItem(R.id.subBtn) {
-                    openFilePickerFor(RCODE_EXTERNAL_SUB, R.string.open_external_sub) { result, data ->
-                        addExternalThing("sub-add", result, data)
-                        restoreState()
-                    }; false
-                },
                 MenuItem(R.id.playlistBtn) {
                     openPlaylistMenu(restoreState); false
                 },
@@ -1571,22 +1820,6 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     }
 
     private var activityResultCallbacks: MutableMap<Int, ActivityResultCallback> = mutableMapOf()
-    private fun openFilePickerFor(requestCode: Int, title: String, skip: Int?, callback: ActivityResultCallback) {
-        val intent = Intent(this, FilePickerActivity::class.java)
-        intent.putExtra("title", title)
-        intent.putExtra("allow_document", true)
-        skip?.let { intent.putExtra("skip", it) }
-        // start file picker at directory of current file
-        val path = MPVLib.getPropertyString("path") ?: ""
-        if (path.startsWith('/'))
-            intent.putExtra("default_path", File(path).parent)
-
-        activityResultCallbacks[requestCode] = callback
-        startActivityForResult(intent, requestCode)
-    }
-    private fun openFilePickerFor(requestCode: Int, @StringRes titleRes: Int, callback: ActivityResultCallback) {
-        openFilePickerFor(requestCode, getString(titleRes), null, callback)
-    }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -1608,8 +1841,7 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     }
 
     private fun updateAudioUI() {
-        val audioButtons = arrayOf(R.id.prevBtn, R.id.cycleAudioBtn, R.id.playBtn,
-                R.id.cycleSpeedBtn, R.id.nextBtn)
+        val audioButtons = arrayOf(R.id.cycleAudioBtn, R.id.playBtn, R.id.cycleSpeedBtn)
         val videoButtons = arrayOf(R.id.cycleAudioBtn, R.id.cycleSubsBtn, R.id.playBtn,
                 R.id.cycleDecoderBtn, R.id.cycleSpeedBtn)
 
@@ -1619,14 +1851,9 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         useAudioUI = shouldUseAudioUI
         Log.v(TAG, "Audio UI: $useAudioUI")
 
-        val seekbarGroup = binding.controlsSeekbarGroup
         val buttonGroup = binding.controlsButtonGroup
 
         if (useAudioUI) {
-            // Move prev/next file from seekbar group to buttons group
-            Utils.viewGroupMove(seekbarGroup, R.id.prevBtn, buttonGroup, 0)
-            Utils.viewGroupMove(seekbarGroup, R.id.nextBtn, buttonGroup, -1)
-
             // Change button layout of buttons group
             Utils.viewGroupReorder(buttonGroup, audioButtons)
 
@@ -1637,9 +1864,6 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
 
             showControls()
         } else {
-            Utils.viewGroupMove(buttonGroup, R.id.prevBtn, seekbarGroup, 0)
-            Utils.viewGroupMove(buttonGroup, R.id.nextBtn, seekbarGroup, -1)
-
             Utils.viewGroupReorder(buttonGroup, videoButtons)
 
             // Show title only depending on settings
@@ -1653,9 +1877,6 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
 
             hideControls() // do NOT use fade runnable
         }
-
-        // Visibility might have changed, so update
-        updatePlaylistButtons()
     }
 
     private fun updateMetadataDisplay() {
@@ -1717,22 +1938,6 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     }
 
     private fun updatePlaylistButtons() {
-        val plCount = psc.playlistCount
-        val plPos = psc.playlistPos
-
-        if (!useAudioUI && plCount == 1) {
-            // use View.GONE so the buttons won't take up any space
-            binding.prevBtn.visibility = View.GONE
-            binding.nextBtn.visibility = View.GONE
-            return
-        }
-        binding.prevBtn.visibility = View.VISIBLE
-        binding.nextBtn.visibility = View.VISIBLE
-
-        val g = ContextCompat.getColor(this, R.color.tint_disabled)
-        val w = ContextCompat.getColor(this, R.color.tint_normal)
-        binding.prevBtn.imageTintList = ColorStateList.valueOf(if (plPos == 0) g else w)
-        binding.nextBtn.imageTintList = ColorStateList.valueOf(if (plPos == plCount-1) g else w)
     }
 
     private fun updateOrientation(initial: Boolean = false) {
@@ -1994,6 +2199,12 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
                 MPVLib.command(arrayOf("script-binding", "stats/display-page-${this.statsLuaMode}-toggle"))
             }
 
+            // Reset zoom/pan on new file
+            currentGestureZoom = 0.0
+            currentGesturePanX = 0.0
+            currentGesturePanY = 0.0
+            eventUiHandler.post { pushZoomPanUpdate() }
+
             playbackHasStarted = true
         }
 
@@ -2102,6 +2313,23 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
                 fadeGestureText()
             }
             PropertyChange.PlayPause -> player.cyclePause()
+            PropertyChange.DoubleSpeed -> {
+                if (diff > 0.5f) {
+                    if (!isDoubleSpeedActive) {
+                        speedBeforeDoubleSpeed = player.playbackSpeed ?: 1.0
+                        MPVLib.setPropertyDouble("speed", 2.0)
+                        isDoubleSpeedActive = true
+                        gestureTextView.text = "2x Speed"
+                        gestureTextView.visibility = View.VISIBLE
+                    }
+                } else {
+                    if (isDoubleSpeedActive) {
+                        MPVLib.setPropertyDouble("speed", speedBeforeDoubleSpeed)
+                        isDoubleSpeedActive = false
+                        gestureTextView.visibility = View.GONE
+                    }
+                }
+            }
             PropertyChange.Custom -> {
                 val keycode = 0x10002 + diff.toInt()
                 MPVLib.command(arrayOf("keypress", "0x%x".format(keycode)))

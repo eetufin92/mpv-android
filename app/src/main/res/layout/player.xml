@@ -27,7 +27,6 @@
             android:layout_marginTop="60dp"
             android:layout_marginRight="24dp"
             android:layout_marginBottom="60dp"
-            android:background="#bf000000"
             android:orientation="vertical">
 
             <LinearLayout
@@ -81,16 +80,6 @@
                 android:orientation="horizontal"
                 android:weightSum="100">
 
-                <ImageButton
-                    android:id="@+id/prevBtn"
-                    style="?buttonBarButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:minWidth="48dp"
-                    android:minHeight="48dp"
-                    app:srcCompat="@drawable/ic_skip_previous_black_24dp"
-                    app:tint="@color/tint_normal" />
-
                 <TextView
                     android:id="@+id/playbackPositionTxt"
                     android:layout_width="wrap_content"
@@ -118,16 +107,6 @@
                     android:textColor="@android:color/white"
                     tools:text="13:37" />
 
-                <ImageButton
-                    android:id="@+id/nextBtn"
-                    style="?buttonBarButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:minWidth="48dp"
-                    android:minHeight="48dp"
-                    app:srcCompat="@drawable/ic_skip_next_black_24dp"
-                    app:tint="@color/tint_normal" />
-
             </LinearLayout>
 
             <LinearLayout
@@ -137,6 +116,14 @@
                 android:layoutDirection="ltr"
                 android:gravity="center"
                 android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/muteBtn"
+                    style="?buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:srcCompat="@drawable/ic_volume_up_white_24dp"
+                    app:tint="@color/tint_normal" />
 
                 <ImageButton
                     android:id="@+id/cycleAudioBtn"
@@ -178,6 +165,14 @@
                     android:layout_height="wrap_content"
                     android:textColor="@android:color/white"
                     tools:text="1.00X" />
+
+                <ImageButton
+                    android:id="@+id/videoSettingsBtn"
+                    style="?buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:srcCompat="@drawable/ic_tune_white_24dp"
+                    app:tint="@color/tint_normal" />
 
             </LinearLayout>
         </LinearLayout>
@@ -222,7 +217,6 @@
             android:layout_alignParentTop="true"
             android:layout_alignParentEnd="true"
             android:alpha="0.5"
-            android:background="#bf000000"
             android:orientation="horizontal">
 
             <ImageButton
@@ -248,14 +242,14 @@
                 app:tint="@color/tint_normal" />
 
             <ImageButton
-                android:id="@+id/topMenuBtn"
+                android:id="@+id/topOrientationBtn"
                 style="?buttonBarButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:minWidth="40dp"
                 android:minHeight="40dp"
                 android:padding="4dp"
-                app:srcCompat="@drawable/ic_settings_black_24dp"
+                app:srcCompat="@drawable/ic_rotate_90_degrees_ccw_white_24dp"
                 app:tint="@color/tint_normal" />
 
         </LinearLayout>

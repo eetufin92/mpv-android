@@ -33,7 +33,7 @@ internal class PlaylistDialog(private val player: MPVView) {
         binding.list.setHasFixedSize(true)
         refresh()
 
-        binding.fileBtn.setOnClickListener { listeners?.pickFile() }
+        binding.fileBtn.visibility = View.GONE
         binding.urlBtn.setOnClickListener { listeners?.openUrl() }
 
         binding.shuffleBtn.setOnClickListener {
