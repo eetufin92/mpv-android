@@ -103,6 +103,10 @@ internal class MPVView(context: Context, attrs: AttributeSet) : BaseMPVView(cont
         MPVLib.setOptionString("tls-verify", "yes")
         MPVLib.setOptionString("tls-ca-file", "${this.context.filesDir.path}/cacert.pem")
         MPVLib.setOptionString("input-default-bindings", "yes")
+
+        if (sharedPreferences.getBoolean("disable_auto_subtitles", false))
+            MPVLib.setOptionString("sid", "no")
+
         // Limit demuxer cache since the defaults are too high for mobile devices
         val cacheMegs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) 64 else 32
         MPVLib.setOptionString("demuxer-max-bytes", "${cacheMegs * 1024 * 1024}")
@@ -347,16 +351,28 @@ internal class MPVView(context: Context, attrs: AttributeSet) : BaseMPVView(cont
 
     // Commands
 
+    var videoZoom: Double?
+        get() = MPVLib.getPropertyDouble("video-zoom")
+        set(v) { MPVLib.setPropertyDouble("video-zoom", v ?: 0.0) }
+
+    var videoPanX: Double?
+        get() = MPVLib.getPropertyDouble("video-pan-x")
+        set(v) { MPVLib.setPropertyDouble("video-pan-x", v ?: 0.0) }
+
+    var videoPanY: Double?
+        get() = MPVLib.getPropertyDouble("video-pan-y")
+        set(v) { MPVLib.setPropertyDouble("video-pan-y", v ?: 0.0) }
+
     fun cyclePause() = MPVLib.command(arrayOf("cycle", "pause"))
     fun cycleAudio() = MPVLib.command(arrayOf("cycle", "audio"))
     fun cycleSub() = MPVLib.command(arrayOf("cycle", "sub"))
     fun cycleHwdec() = MPVLib.command(arrayOf("cycle-values", "hwdec", HWDECS, "no"))
 
     fun cycleSpeed() {
-        val speeds = arrayOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+        val speeds = arrayOf(0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0, 8.0)
         val currentSpeed = playbackSpeed ?: 1.0
-        val index = speeds.indexOfFirst { it > currentSpeed }
-        playbackSpeed = speeds[if (index == -1) 0 else index]
+        val index = speeds.indexOfFirst { it > currentSpeed + 0.001 }
+        playbackSpeed = if (index == -1) speeds[0] else speeds[index]
     }
 
     fun getRepeat(): Int {
