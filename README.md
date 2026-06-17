@@ -1,18 +1,34 @@
-# mpv for Android
+# mpv for Android (Fork)
 
-[![Build Status](https://github.com/mpv-android/mpv-android/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/mpv-android/mpv-android/actions/workflows/build.yml)
+> [!IMPORTANT]
+> This is a customized fork of [mpv-android](https://github.com/mpv-android/mpv-android). It features a simplified UI, enhanced playback controls, and is strictly focused on intent-based opening.
 
-mpv-android is a video player for Android based on [libmpv](https://github.com/mpv-player/mpv).
+## Features (Fork Specific)
 
-## Features
+* **Strict Intent Opening**: File browsing has been removed. Open files directly from other apps or via CLI.
+* **Modern UI**: Clean, translucent player overlay with no dark semi-transparent backgrounds.
+* **Pinch-to-Zoom & Pan**: Smooth, high-performance pinch-to-zoom and two-finger panning.
+* **Enhanced Controls**: 
+    * Unified grid-based menus for Audio, Subtitles, Speed, and Decoder.
+    * Playback speed from 0.01x to 8.0x.
+    * Direct access to video adjustments (Brightness, Contrast, Gamma, Saturation).
+    * Toggle mute button with dynamic icons.
+    * Top-bar screen orientation switch.
+* **Simplified Gestures**: 
+    * One-finger horizontal swipe to seek.
+    * Tap and hold for temporary 2x speed boost.
+    * Vertical gestures and zone-taps disabled to prevent accidents.
+* **Automatic Background Playback**: Resumes in background automatically when leaving the app.
+* **Subtitle Settings**: Option to disable automatic subtitle showing.
+
+## Original Features
 
 * Hardware and software video decoding
-* Gesture-based seeking, volume/brightness control and more
 * libass support for styled subtitles
 * Secondary (or dual) subtitle support
 * High-quality rendering with advanced settings (scalers, debanding, interpolation, ...)
 * Play network streams with the "Open URL" function
-* Background playback, Picture-in-Picture, keyboard input supported
+* Picture-in-Picture, keyboard input supported
 
 ### Library?
 
@@ -24,13 +40,7 @@ Native code is built by [these scripts](buildscripts/).
 
 ## Downloads
 
-You can download mpv-android from the [Releases section](https://github.com/mpv-android/mpv-android/releases) or
-
-[<img src="https://play.google.com/intl/en_us/badges/images/generic/en-play-badge.png" alt="Get it on Google Play" height="80">](https://play.google.com/store/apps/details?id=is.xyz.mpv)
-
-[<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/is.xyz.mpv)
-
-**Note**: Android TV is supported, but only available on F-Droid or by installing the APK manually.
+You can download this version from the [Releases section](https://github.com/mpv-android/mpv-android/releases).
 
 ## Building from source
 
