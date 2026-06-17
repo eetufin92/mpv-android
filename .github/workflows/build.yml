@@ -3,6 +3,7 @@ name: build
 on:
   push:
     branches: [ "master" ]
+  workflow_dispatch:
 
 jobs:
   linux:
@@ -61,11 +62,8 @@ jobs:
       - name: Build
         run: |
           cd buildscripts
-          ./buildall.sh --arch armv7l mpv
           ./buildall.sh --arch arm64 mpv
-          ./buildall.sh --arch x86 mpv
-          ./buildall.sh --arch x86_64 mpv
-          ./buildall.sh -n mpv-android
+          ./buildall.sh --arch arm64 mpv-android
 
       - name: Sign APK
         env:
@@ -79,23 +77,24 @@ jobs:
           
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -r | head -n 1)
           
-          UNSIGNED_APK=$(find app/build/outputs/apk -name "*universal-release-unsigned.apk" | head -n 1)
+          # We only built arm64
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*arm64-v8a-release-unsigned.apk" | head -n 1)
           [ -z "$UNSIGNED_APK" ] && UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           
           $APKSIGNER sign --ks release.jks \
             --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
             --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
             --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
-            --out mpv-android-release.apk \
+            --out mpv-android-arm64-release.apk \
             $UNSIGNED_APK
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mpv-android-release
+          name: mpv-android-arm64
           path: |
             app/build/outputs/apk/**/*.apk
-            mpv-android-release.apk
+            mpv-android-arm64-release.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -105,6 +104,6 @@ jobs:
           body: |
             ### Changes in this release:
             ${{ steps.changelog.outputs.CHANGES }}
-          files: mpv-android-release.apk
+          files: mpv-android-arm64-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

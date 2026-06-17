@@ -3,6 +3,8 @@
 > [!IMPORTANT]
 > This is a customized fork of [mpv-android](https://github.com/mpv-android/mpv-android). It features a simplified UI, enhanced playback controls, and is strictly focused on intent-based opening.
 
+![Screenshot](screenshot.png)
+
 ## Features (Fork Specific)
 
 * **Strict Intent Opening**: File browsing has been removed. Open files directly from other apps or via CLI.
