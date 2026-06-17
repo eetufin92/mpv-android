@@ -14,6 +14,7 @@ enum class PropertyChange {
     Volume,
     Bright,
     Finalize,
+    DoubleSpeed,
 
     /* Tap gestures */
     SeekFixed,
@@ -49,8 +50,10 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
     // last non-throttled processed position
     private var lastPos = PointF()
 
-    private var width = 0f
-    private var height = 0f
+    val width: Float get() = _width
+    val height: Float get() = _height
+    private var _width = 0f
+    private var _height = 0f
     // minimum movement which triggers a Control state
     private var trigger = 0f
 
@@ -72,8 +75,8 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
 
     fun setMetrics(width: Float, height: Float) {
         assertFloat(width, height)
-        this.width = width
-        this.height = height
+        this._width = width
+        this._height = height
         trigger = min(width, height) / TRIGGER_RATE
     }
 
@@ -151,22 +154,18 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
             State.Down -> {
                 // we might get into one of Control states if user moves enough
                 if (abs(dx) > trigger) {
-                    state = gestureHoriz
+                    state = State.ControlSeek
                     stateDirection = 0
-                } else if (abs(dy) > trigger) {
-                    state = if (initialPos.x > width / 2) gestureVertRight else gestureVertLeft
-                    stateDirection = 1
                 }
+                // vertical gestures disabled
                 // send Init so that it has a chance to cache values before we start modifying them
                 if (state != State.Down)
                     sendPropertyChange(PropertyChange.Init, 0f)
             }
             State.ControlSeek ->
                 sendPropertyChange(PropertyChange.Seek, CONTROL_SEEK_MAX * dr)
-            State.ControlVolume ->
-                sendPropertyChange(PropertyChange.Volume, CONTROL_VOLUME_MAX * dr)
-            State.ControlBright ->
-                sendPropertyChange(PropertyChange.Bright, CONTROL_BRIGHT_MAX * dr)
+            State.ControlVolume -> {}
+            State.ControlBright -> {}
         }
         return state != State.Up && state != State.Down
     }
@@ -175,28 +174,20 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
         observer.onPropertyChange(p, diff)
     }
 
-    fun syncSettings(prefs: SharedPreferences, resources: Resources) {
-        val get: (String, Int) -> String = { key, defaultRes ->
-            val v = prefs.getString(key, "")
-            if (v.isNullOrEmpty()) resources.getString(defaultRes) else v
-        }
-        val map = mapOf(
-            "bright" to State.ControlBright,
-            "seek" to State.ControlSeek,
-            "volume" to State.ControlVolume
-        )
-        val map2 = mapOf(
-            "seek" to PropertyChange.SeekFixed,
-            "playpause" to PropertyChange.PlayPause,
-            "custom" to PropertyChange.Custom
-        )
+    fun reset() {
+        if (state != State.Up && state != State.Down)
+            sendPropertyChange(PropertyChange.Finalize, 0f)
+        state = State.Up
+        lastTapTime = 0
+    }
 
-        gestureHoriz = map[get("gesture_horiz", R.string.pref_gesture_horiz_default)] ?: State.Down
-        gestureVertLeft = map[get("gesture_vert_left", R.string.pref_gesture_vert_left_default)] ?: State.Down
-        gestureVertRight = map[get("gesture_vert_right", R.string.pref_gesture_vert_right_default)] ?: State.Down
-        tapGestureLeft = map2[get("gesture_tap_left", R.string.pref_gesture_tap_left_default)]
-        tapGestureCenter = map2[get("gesture_tap_center", R.string.pref_gesture_tap_center_default)]
-        tapGestureRight = map2[get("gesture_tap_right", R.string.pref_gesture_tap_right_default)]
+    fun syncSettings(prefs: SharedPreferences, resources: Resources) {
+        gestureHoriz = State.ControlSeek
+        gestureVertLeft = State.Down
+        gestureVertRight = State.Down
+        tapGestureLeft = null
+        tapGestureCenter = null
+        tapGestureRight = null
     }
 
     fun onTouchEvent(e: MotionEvent): Boolean {
@@ -212,7 +203,12 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
         val point = PointF(e.x, e.y)
         when (e.action) {
             MotionEvent.ACTION_UP -> {
-                gestureHandled = processMovement(point) or processTap(point)
+                if (state == State.Down && (e.eventTime - e.downTime) > 500) {
+                    sendPropertyChange(PropertyChange.DoubleSpeed, 0f)
+                    gestureHandled = true
+                } else {
+                    gestureHandled = processMovement(point) or processTap(point)
+                }
                 if (state != State.Down)
                     sendPropertyChange(PropertyChange.Finalize, 0f)
                 state = State.Up
@@ -222,14 +218,19 @@ internal class TouchGestures(private val observer: TouchGesturesObserver) {
                 if (e.y < height * DEADZONE / 100 || e.y > height * (100 - DEADZONE) / 100)
                     return false
                 initialPos.set(point)
-                processTap(point)
                 lastPos.set(point)
                 state = State.Down
                 // always return true on ACTION_DOWN to continue receiving events
                 gestureHandled = true
             }
             MotionEvent.ACTION_MOVE -> {
-                gestureHandled = processMovement(point)
+                if (state == State.Down && (e.eventTime - e.downTime) > 500) {
+                    // Tap and hold detected
+                    sendPropertyChange(PropertyChange.DoubleSpeed, 1f)
+                    gestureHandled = true
+                } else {
+                    gestureHandled = processMovement(point)
+                }
             }
         }
         return gestureHandled
