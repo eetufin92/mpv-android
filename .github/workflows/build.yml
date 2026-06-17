@@ -77,10 +77,16 @@ jobs:
           
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -r | head -n 1)
           
-          # We only built arm64
-          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*arm64-v8a-release-unsigned.apk" | head -n 1)
-          [ -z "$UNSIGNED_APK" ] && UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          # We only built arm64. Search recursively in the apk output directory.
+          UNSIGNED_APK=$(find app/build/outputs/apk -name "*arm64-v8a-release-unsigned.apk" | head -n 1)
+          [ -z "$UNSIGNED_APK" ] && UNSIGNED_APK=$(find app/build/outputs/apk -name "*release-unsigned.apk" | head -n 1)
           
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "Error: Could not find unsigned release APK."
+            exit 1
+          fi
+          
+          echo "Signing APK: $UNSIGNED_APK"
           $APKSIGNER sign --ks release.jks \
             --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
             --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
