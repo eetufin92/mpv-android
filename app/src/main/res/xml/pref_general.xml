@@ -62,4 +62,10 @@
         android:summary="@string/pref_new_intent_replace_summary"
         android:title="@string/pref_new_intent_replace_title" />
 
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        app:iconSpaceReserved="false"
+        android:key="disable_auto_subtitles"
+        android:title="Disable auto-showing subtitles" />
+
 </PreferenceScreen>
