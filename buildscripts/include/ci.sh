@@ -17,8 +17,8 @@ fetch_prefix() {
 		else
 			echo "Cache seems to be empty"
 		fi
-		printf 'Expecting "%s",\nfound     "%s".\n' "$ci_tarball" "$text"
-		if [[ "$text" == "$ci_tarball" ]]; then
+		printf 'Expecting "%s",\nfound     "%s".\n' "$ci_tarball-$1" "$text"
+		if [[ "$text" == "$ci_tarball-$1" ]]; then
 			tar -xzf "$CACHE_FOLDER/data.tgz" -C prefix && return 0
 		fi
 	fi
@@ -26,18 +26,18 @@ fetch_prefix() {
 }
 
 build_prefix() {
-	msg "Building the prefix ($ci_tarball)..."
+	msg "Building the prefix ($ci_tarball-$2)..."
 
 	msg "Fetching deps"
 	IN_CI=1 ./include/download-deps.sh
 
-	msg "Compiling"
-	./buildall.sh --only-deps mpv
+	msg "Compiling for $2"
+	./buildall.sh --arch "$2" --only-deps mpv
 
 	if [[ "$CACHE_MODE" == folder && -w "$CACHE_FOLDER" ]]; then
 		msg "Compressing the prefix"
 		tar -cvzf "$CACHE_FOLDER/data.tgz" -C prefix .
-		echo "$ci_tarball" >"$CACHE_FOLDER/id.txt"
+		echo "$ci_tarball-$2" >"$CACHE_FOLDER/id.txt"
 	fi
 }
 
@@ -64,26 +64,22 @@ elif [ "$1" = "install" ]; then
 	tar -xzf master.tgz -C deps/mpv --strip-components=1
 	rm master.tgz
 
-	msg "Trying to fetch existing prefix"
+	msg "Trying to fetch existing prefix for $2"
 	mkdir -p prefix
-	fetch_prefix || build_prefix
+	fetch_prefix "$2" || build_prefix "$1" "$2"
 	exit 0
 elif [ "$1" = "build" ]; then
-	# run build
-	:
+	msg "Building mpv for $2"
+	./buildall.sh --arch "$2" -n mpv || {
+		# show logfile if configure failed
+		[ ! -f deps/mpv/_build_$2/config.h ] && \
+			cat deps/mpv/_build_$2/meson-logs/meson-log.txt
+		exit 1
+	}
+
+	msg "Building mpv-android for $2"
+	./buildall.sh --arch "$2" -n
+	exit 0
 else
 	exit 1
 fi
-
-msg "Building mpv"
-./buildall.sh -n mpv || {
-	# show logfile if configure failed
-	[ ! -f deps/mpv/_build_armv7l/config.h ] && \
-		cat deps/mpv/_build_armv7l/meson-logs/meson-log.txt
-	exit 1
-}
-
-msg "Building mpv-android"
-./buildall.sh -n
-
-exit 0

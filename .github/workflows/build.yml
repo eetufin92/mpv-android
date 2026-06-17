@@ -42,7 +42,7 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: gh-cache/
-          key: "${{ env.CACHE_IDENTIFIER }}"
+          key: "${{ env.CACHE_IDENTIFIER }}-arm64"
           enableCrossOsArchive: true
 
       - name: Install packages
@@ -54,16 +54,14 @@ jobs:
       - name: Download or build deps
         run: |
           mkdir -p "$CACHE_FOLDER"
-          buildscripts/include/ci.sh install
+          buildscripts/include/ci.sh install arm64
         env:
           CACHE_MODE: "folder"
           CACHE_FOLDER: "${{ github.workspace }}/gh-cache"
 
       - name: Build
         run: |
-          cd buildscripts
-          ./buildall.sh --arch arm64 mpv
-          ./buildall.sh --arch arm64 mpv-android
+          buildscripts/include/ci.sh build arm64
 
       - name: Sign APK
         env:
